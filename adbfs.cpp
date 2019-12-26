@@ -103,7 +103,7 @@ void adb_shell_escape_command(string&);
 queue<string> adb_push(const string&, const string&);
 queue<string> adb_pull(const string&, const string&);
 queue<string> adb_shell(const string&, bool);
-queue<string> shell(const string&);
+queue<string> shell(const string&, int verbose);
 
 static const char PERMISSION_ERR_MSG[] = ": Permission denied";
 
@@ -126,12 +126,12 @@ map<string,bool> fileTruncated;
    @param command the command to execute.
    @see exec_command.
  */
-queue<string> shell(const string& command)
+queue<string> shell(const string& command, int verbose)
 {
     string actual_command;
     actual_command.assign(command);
     //shell_escape_command(actual_command);
-    return exec_command(actual_command);
+    return exec_command(actual_command, verbose);
 }
 
 /**
@@ -153,7 +153,7 @@ queue<string> adb_shell(const string& command, bool getStderr = false)
     actual_command.insert(0, "adb shell \"");
     actual_command.append("\"");
     if (getStderr) actual_command.append(" 2>&1");
-    return exec_command(actual_command);
+    return exec_command(actual_command, 1);
 }
 
 /**
@@ -224,7 +224,9 @@ void shell_escape_path(string &path)
 void cleanupTmpDir(void) {
     string command = "rm -rf ";
     command.append(tempDirPath);
-    shell(command);
+    // No logging to the console, because this logging is useless and messes up
+    // error messages such as missing mountpoint operand.
+    shell(command, 0);
 }
 
 void makeTmpDir(void) {
@@ -272,7 +274,7 @@ queue<string> adb_pull(const string& remote_source,
 {
     string cmd;
     adb_push_pull_cmd(cmd, false, local_destination, remote_source);
-    return exec_command(cmd);
+    return exec_command(cmd, 1);
 }
 
 /**
@@ -288,7 +290,7 @@ queue<string> adb_push(const string& local_source,
 {
     string cmd;
     adb_push_pull_cmd(cmd, true, local_source, remote_destination);
-    queue<string> res = exec_command(cmd);
+    queue<string> res = exec_command(cmd, 1);
     invalidateCache(remote_destination);
     return res;
 }
@@ -990,8 +992,6 @@ static struct fuse_operations adbfs_oper;
  */
 int main(int argc, char *argv[])
 {
-    signal(SIGSEGV, handler);   // install our handler
-    makeTmpDir();
     memset(&adbfs_oper, 0, sizeof(adbfs_oper));
     adbfs_oper.readdir= adb_readdir;
     adbfs_oper.getattr= adb_getattr;
@@ -1009,6 +1009,27 @@ int main(int argc, char *argv[])
     adbfs_oper.rmdir = adb_rmdir;
     adbfs_oper.unlink = adb_unlink;
     adbfs_oper.readlink = adb_readlink;
-    adb_shell("ls");
-    return fuse_main(argc, argv, &adbfs_oper, NULL);
+
+    // Parse -h and -V here in order to
+    // 1. print adbfs version if -V is specified.
+    // 2. properly return 0 when -h or -V is specified.
+    // 3. avoid starting adb server if not running and -h or -V is specified.
+    // 4. avoid creation and removal of the temp directory if -h or -V is
+    // specified.
+    for (int k = 1; k < argc; ++k) {
+        if (!strcmp(argv[k], "-h") || !strcmp(argv[k], "--help")) {
+            fuse_main(argc, argv, &adbfs_oper, 0);
+            return 0;
+        }
+        if (!strcmp(argv[k], "-V") || !strcmp(argv[k], "--version")) {
+            cout << "adbfs-rootless-1.0" << endl;
+            fuse_main(argc, argv, &adbfs_oper, 0);
+            return 0;
+        }
+    }
+
+    signal(SIGSEGV, handler);   // install our handler
+    makeTmpDir();
+    exec_command("adb shell \"touch -c a\"", 0); // Start adb server.
+    return fuse_main(argc, argv, &adbfs_oper, 0);
 }

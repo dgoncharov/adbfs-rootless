@@ -153,9 +153,10 @@ int xtoi(const char* xs, unsigned int* result)
 
    @param command the string to be executed as a command.
  */
-queue<string> exec_command(const string& command)
+queue<string> exec_command(const string& command, int verbose)
 {
-    cout << "--*-- " << "exec_command: "  << command << "\n";
+    if (verbose)
+        cout << "--*-- " << "exec_command: "  << command << "\n";
     queue<string> output;
     FILE *fp = popen(command.c_str(), "r" );
 
